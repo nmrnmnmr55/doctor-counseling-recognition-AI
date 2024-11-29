@@ -1,0 +1,6 @@
+.env 
+__pycache__/ 
+*.pyc 
+app_debug.log 
+temp_audio.wav 
+transcriptions.json 
