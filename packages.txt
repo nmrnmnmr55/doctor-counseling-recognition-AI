@@ -1,2 +1,4 @@
+libasound2
 portaudio19-dev
 python3-pyaudio
+libasound2-plugins
