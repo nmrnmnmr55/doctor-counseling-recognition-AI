@@ -265,31 +265,35 @@ def save_transcription(transcription):
 
 def continuous_recording():
     r = sr.Recognizer()
-    with sr.Microphone() as source:
-        logger.info("Adjusting for ambient noise...")
-        r.adjust_for_ambient_noise(source, duration=3)
-        r.dynamic_energy_threshold = True
-        r.dynamic_energy_adjustment_ratio = 1.2
-        r.energy_threshold = r.energy_threshold * 1.2
-        global_state.set_noise_threshold(r.energy_threshold)
-        logger.info(f"Noise threshold set to: {r.energy_threshold}")
-        
-        while not global_state.stop_flag.is_set() and not should_exit.is_set():
-            try:
-                logger.debug("Listening for speech...")
-                audio = r.listen(source, 
-                               phrase_time_limit=5,
-                               timeout=2)
-                
-                if audio.get_raw_data() and global_state.can_add_transcription():
-                    global_state.audio_queue.put(audio)
-                    logger.debug("Audio captured and added to queue")
-                
-            except sr.WaitTimeoutError:
-                continue
-            except Exception as e:
-                logger.error(f"Error in continuous recording: {str(e)}")
-        logger.info("Recording stopped in continuous_recording function")
+    try:
+        with sr.Microphone() as source:
+            logger.info("Adjusting for ambient noise...")
+            r.adjust_for_ambient_noise(source, duration=3)
+            r.dynamic_energy_threshold = True
+            r.dynamic_energy_adjustment_ratio = 1.2
+            r.energy_threshold = r.energy_threshold * 1.2
+            global_state.set_noise_threshold(r.energy_threshold)
+            logger.info(f"Noise threshold set to: {r.energy_threshold}")
+            
+            while not global_state.stop_flag.is_set() and not should_exit.is_set():
+                try:
+                    logger.debug("Listening for speech...")
+                    audio = r.listen(source, 
+                                   phrase_time_limit=5,
+                                   timeout=2)
+                    
+                    if audio.get_raw_data() and global_state.can_add_transcription():
+                        global_state.audio_queue.put(audio)
+                        logger.debug("Audio captured and added to queue")
+                    
+                except sr.WaitTimeoutError:
+                    continue
+                except Exception as e:
+                    logger.error(f"Error in continuous recording: {str(e)}")
+            logger.info("Recording stopped in continuous_recording function")
+    except OSError as e:
+        st.error("マイクが検出できません。デバイスを確認してください。")
+        st.stop()
 
 def process_audio():
     while not global_state.stop_flag.is_set() and not should_exit.is_set() or not global_state.audio_queue.empty():
