@@ -292,63 +292,42 @@ def continuous_recording():
                </script>
            """, unsafe_allow_html=True)
            
-       import platform
-       system = platform.system().lower()
-       logger.info(f"Detected OS: {system}")
+       # OSに依存せずsounddeviceを使用
+       import sounddevice as sd
+       import soundfile as sf
+       import numpy as np
        
-       if "win" in system:
-           import sounddevice as sd
-           import soundfile as sf
-           import numpy as np
-           
-           devices = sd.query_devices()
-           logger.debug(f"Available audio devices: {devices}")
+       devices = sd.query_devices()
+       logger.debug(f"Available audio devices: {devices}")
+       
+       try:
            input_device = sd.default.device[0]
            logger.info(f"Selected input device: {input_device}")
+       except:
+           logger.warning("Default device not found, trying with device=None")
+           input_device = None
            
-           sample_rate = 44100
-           while not global_state.stop_flag.is_set() and not should_exit.is_set():
-               try:
-                   recording = sd.rec(
-                       int(5 * sample_rate),
-                       samplerate=sample_rate,
-                       channels=1,
-                       dtype='float32',
-                       device=input_device
-                   )
-                   sd.wait()
-                   
-                   if recording.any():
-                       sf.write('temp_audio.wav', recording, sample_rate)
+       sample_rate = 44100
+       while not global_state.stop_flag.is_set() and not should_exit.is_set():
+           try:
+               recording = sd.rec(
+                   int(5 * sample_rate),
+                   samplerate=sample_rate,
+                   channels=1,
+                   dtype='float32',
+                   device=input_device
+               )
+               sd.wait()
+               
+               if recording.any():
+                   sf.write('temp_audio.wav', recording, sample_rate)
+                   if global_state.can_add_transcription():
                        with open('temp_audio.wav', 'rb') as audio_file:
                            global_state.audio_queue.put(audio_file)
                            logger.debug("Audio captured and added to queue")
-               except Exception as e:
-                   logger.error(f"Error in Windows recording: {str(e)}", exc_info=True)
-                   continue
-       else:
-           try:
-               r = sr.Recognizer()
-               mics = sr.Microphone.list_microphone_names()
-               logger.debug(f"Available microphones: {mics}")
-               
-               with sr.Microphone(device_index=None) as source:
-                   logger.info("Microphone initialized")
-                   r.adjust_for_ambient_noise(source, duration=1)
-                   while not global_state.stop_flag.is_set() and not should_exit.is_set():
-                       try:
-                           audio = r.listen(source, timeout=2, phrase_time_limit=5)
-                           if audio and audio.get_raw_data():
-                               global_state.audio_queue.put(audio)
-                               logger.debug("Audio captured and added to queue")
-                       except sr.WaitTimeoutError:
-                           continue
-                       except Exception as e:
-                           logger.error(f"Error in recording: {str(e)}", exc_info=True)
-                           continue
            except Exception as e:
-               logger.error(f"Error initializing microphone: {str(e)}", exc_info=True)
-               raise
+               logger.error(f"Recording error: {str(e)}", exc_info=True)
+               continue
                    
    except Exception as e:
        logger.error(f"Recording error: {e}", exc_info=True)
