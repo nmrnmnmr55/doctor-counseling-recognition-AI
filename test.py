@@ -277,144 +277,127 @@ def save_transcription(transcription):
         logger.info(f"Created new transcription file with: {transcription}")
 
 def continuous_recording():
-   try:
-       st.info("マイクへのアクセスを許可してください")
-       
-       if "navigator.mediaDevices" not in st.session_state:
-           st.markdown("""
-               <script>
-               navigator.mediaDevices.getUserMedia({audio: true})
-                   .then(stream => {
-                       window.streamReference = stream;
-                       sessionStorage.setItem('micPermission', 'granted');
-                   })
-                   .catch(err => console.error(err));
-               </script>
-           """, unsafe_allow_html=True)
-           
-       import sounddevice as sd
-       import soundfile as sf
-       import numpy as np
-       
-       devices = sd.query_devices()
-       logger.debug(f"Available audio devices: {devices}")
-       
-       # 入力デバイスの検索と設定
-       input_devices = [i for i, d in enumerate(devices) if d.get('max_input_channels', 0) > 0]
-       if not input_devices:
-           raise ValueError("No input devices found")
-           
-       device_id = input_devices[0]
-       logger.info(f"Using input device {device_id}: {devices[device_id]['name']}")
-       
-       # オーディオストリーム設定
-       sample_rate = 44100
-       sd.default.device = device_id
-       sd.default.samplerate = sample_rate
-       sd.default.channels = 1
-       sd.default.dtype = 'float32'
-       
-       retry_count = 0
-       max_retries = 3
-       
-       # オーディオストリームの初期化
-       try:
-           if "audio_fallback" not in st.session_state:
-               st.session_state.audio_fallback = False
-               
-           if not st.session_state.audio_fallback:
-               with sd.InputStream(device=device_id, channels=1, samplerate=sample_rate) as stream:
-                   logger.info("Primary audio stream initialized")
-           else:
-               # ブラウザAPIフォールバック
-               st.markdown("""
-                   <script>
-                   const audioContext = new AudioContext();
-                   let audioData = [];
-                   
-                   navigator.mediaDevices.getUserMedia({audio: true})
-                       .then(stream => {
-                           const source = audioContext.createMediaStreamSource(stream);
-                           const processor = audioContext.createScriptProcessor(4096, 1, 1);
-                           
-                           processor.onaudioprocess = (e) => {
-                               const input = e.inputBuffer.getChannelData(0);
-                               audioData = Array.from(input);
-                               window.audioBuffer = audioData;
-                           };
-                           
-                           source.connect(processor);
-                           processor.connect(audioContext.destination);
-                       })
-                       .catch(err => console.error('Audio fallback error:', err));
-                   </script>
-               """, unsafe_allow_html=True)
-               logger.info("Browser audio fallback initialized")
-
-       except Exception as e:
-           logger.error(f"Stream initialization error: {e}")
-           st.session_state.audio_fallback = True
-           st.experimental_rerun()
-       
-       while not global_state.stop_flag.is_set() and not should_exit.is_set():
-           try:
-               with sd.InputStream(device=device_id, channels=1, samplerate=sample_rate) as stream:
-                   recording = sd.rec(
-                       int(5 * sample_rate),
-                       samplerate=sample_rate,
-                       channels=1,
-                       device=device_id
-                   )
-                   sd.wait()
-                   
-                   if recording is not None and recording.any():
-                       sf.write('temp_audio.wav', recording, sample_rate)
-                       if global_state.can_add_transcription():
-                           with open('temp_audio.wav', 'rb') as audio_file:
-                               global_state.audio_queue.put(audio_file)
-                               logger.debug("Audio captured successfully")
-                   retry_count = 0
-                   
-           except Exception as e:
-               retry_count += 1
-               logger.error(f"Recording error (attempt {retry_count}/{max_retries}): {str(e)}", exc_info=True)
-               if retry_count >= max_retries:
-                   if not st.session_state.audio_fallback:
-                       st.session_state.audio_fallback = True
-                       st.experimental_rerun()
-                   else:
-                       raise
-               time.sleep(1)
-               continue
-               
-   except Exception as e:
-       logger.error(f"Fatal recording error: {e}", exc_info=True)
-       st.error("マイク初期化エラー。ブラウザの設定でマイクの許可を確認してください。")
-      # ブラウザAPIを使用した録音の場合の処理
-       if st.session_state.audio_fallback:
-           try:
-               # JavaScriptから音声データを取得
-               audio_data = st.experimental_get_query_params().get('audioBuffer', None)
-               if audio_data:
-                   audio_array = np.array(audio_data, dtype=np.float32)
-                   sf.write('temp_audio.wav', audio_array, sample_rate)
-                   if global_state.can_add_transcription():
-                       with open('temp_audio.wav', 'rb') as audio_file:
-                           global_state.audio_queue.put(audio_file)
-                           logger.debug("Browser audio captured successfully")
-           except Exception as e:
-               logger.error(f"Browser audio recording error: {str(e)}", exc_info=True)
-               time.sleep(1)
-               continue
-
-   finally:
-       # クリーンアップ
-       logger.info("Cleaning up audio resources")
-       if os.path.exists('temp_audio.wav'):
-           try:
-               os.remove('temp_audio.wav')
-           except Exception as e:
-               logger.error(f"Error cleaning up temporary file: {e}")
+    try:
+        st.info("マイクへのアクセスを許可してください")
+        
+        if "navigator.mediaDevices" not in st.session_state:
+            st.markdown("""
+                <script>
+                navigator.mediaDevices.getUserMedia({audio: true})
+                    .then(stream => {
+                        window.streamReference = stream;
+                        sessionStorage.setItem('micPermission', 'granted');
+                    })
+                    .catch(err => console.error(err));
+                </script>
+            """, unsafe_allow_html=True)
+            
+        import sounddevice as sd
+        import soundfile as sf
+        import numpy as np
+        
+        devices = sd.query_devices()
+        logger.debug(f"Available audio devices: {devices}")
+        
+        # 入力デバイスの検索と設定
+        input_devices = [i for i, d in enumerate(devices) if d.get('max_input_channels', 0) > 0]
+        if not input_devices:
+            raise ValueError("No input devices found")
+            
+        device_id = input_devices[0]
+        logger.info(f"Using input device {device_id}: {devices[device_id]['name']}")
+        
+        # オーディオストリーム設定
+        sample_rate = 44100
+        sd.default.device = device_id
+        sd.default.samplerate = sample_rate
+        sd.default.channels = 1
+        sd.default.dtype = 'float32'
+        
+        retry_count = 0
+        max_retries = 3
+        
+        # メインの録音ループ
+        while not global_state.stop_flag.is_set() and not should_exit.is_set():
+            try:
+                if not st.session_state.get('audio_fallback', False):
+                    # システムマイク録音
+                    with sd.InputStream(device=device_id, channels=1, samplerate=sample_rate) as stream:
+                        recording = sd.rec(
+                            int(5 * sample_rate),
+                            samplerate=sample_rate,
+                            channels=1,
+                            device=device_id
+                        )
+                        sd.wait()
+                        
+                        if recording is not None and recording.any():
+                            sf.write('temp_audio.wav', recording, sample_rate)
+                            if global_state.can_add_transcription():
+                                with open('temp_audio.wav', 'rb') as audio_file:
+                                    global_state.audio_queue.put(audio_file)
+                                    logger.debug("Audio captured successfully")
+                        retry_count = 0
+                else:
+                    # ブラウザAPI録音
+                    audio_data = st.experimental_get_query_params().get('audioBuffer', None)
+                    if audio_data:
+                        audio_array = np.array(audio_data, dtype=np.float32)
+                        sf.write('temp_audio.wav', audio_array, sample_rate)
+                        if global_state.can_add_transcription():
+                            with open('temp_audio.wav', 'rb') as audio_file:
+                                global_state.audio_queue.put(audio_file)
+                                logger.debug("Browser audio captured successfully")
+                    time.sleep(0.1)
+                    
+            except Exception as e:
+                retry_count += 1
+                logger.error(f"Recording error (attempt {retry_count}/{max_retries}): {str(e)}", exc_info=True)
+                if retry_count >= max_retries:
+                    st.session_state['audio_fallback'] = True
+                    st.experimental_rerun()
+                time.sleep(1)
+                
+    except Exception as e:
+        logger.error(f"Fatal recording error: {e}", exc_info=True)
+        st.error("マイク初期化エラー。ブラウザの設定でマイクの許可を確認してください。")
+        
+    finally:
+        # クリーンアップ
+        if os.path.exists('temp_audio.wav'):
+            try:
+                os.remove('temp_audio.wav')
+            except Exception as e:
+                logger.error(f"Error cleaning up temporary file: {e}")
+            
+       # フォールバック設定を取得
+        if get_initial_state():
+            try:
+                # ブラウザAPIフォールバックの設定
+                st.markdown("""
+                    <script>
+                    const initAudioStream = async () => {
+                        const audioContext = new AudioContext();
+                        const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+                        const source = audioContext.createMediaStreamSource(stream);
+                        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+                        
+                        processor.onaudioprocess = (e) => {
+                            const input = e.inputBuffer.getChannelData(0);
+                            window.audioBuffer = Array.from(input);
+                        };
+                        
+                        source.connect(processor);
+                        processor.connect(audioContext.destination);
+                    };
+                    initAudioStream().catch(err => console.error('Audio init error:', err));
+                    </script>
+                """, unsafe_allow_html=True)
+                logger.info("Audio fallback mechanism initialized")
+                
+            except Exception as e:
+                logger.error(f"Audio fallback initialization error: {e}", exc_info=True)
+                raise
 
 def process_audio():
     while not global_state.stop_flag.is_set() and not should_exit.is_set() or not global_state.audio_queue.empty():
