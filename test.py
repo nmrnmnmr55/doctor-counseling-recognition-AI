@@ -14,11 +14,24 @@ import atexit
 from datetime import datetime, timedelta
 
 # ロギングの設定
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s', encoding='utf-8')
+logging.basicConfig(
+   level=logging.DEBUG,
+   format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(funcName)s - %(message)s',
+   encoding='utf-8'
+)
 logger = logging.getLogger(__name__)
+
 file_handler = logging.FileHandler('app_debug.log', encoding='utf-8', mode='w')
 file_handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(funcName)s - %(message)s')
+file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
+
+# エラーログをファイルに保存
+error_handler = logging.FileHandler('error.log', encoding='utf-8', mode='w')
+error_handler.setLevel(logging.ERROR)
+error_handler.setFormatter(formatter)
+logger.addHandler(error_handler)
 
 # 終了処理用のフラグ
 should_exit = threading.Event()
@@ -264,52 +277,67 @@ def save_transcription(transcription):
         logger.info(f"Created new transcription file with: {transcription}")
 
 def continuous_recording():
-    try:
-        st.info("マイクへのアクセスを許可してください")
-        import platform
-        system = platform.system()
-        logger.info(f"Detected OS: {system}")
-
-        if system == "Windows":
-            import sounddevice as sd
-            import soundfile as sf
-            import numpy as np
-            
-            sample_rate = 44100
-            while not global_state.stop_flag.is_set() and not should_exit.is_set():
-                try:
-                    recording = sd.rec(int(5 * sample_rate), 
-                                     samplerate=sample_rate, 
-                                     channels=1, 
-                                     dtype='float32')
-                    sd.wait()
-                    sf.write('temp_audio.wav', recording, sample_rate)
-                    
-                    if global_state.can_add_transcription():
-                        with open('temp_audio.wav', 'rb') as audio_file:
-                            global_state.audio_queue.put(audio_file)
-                            logger.debug("Audio captured and added to queue")
-                except Exception as e:
-                    logger.error(f"Error in Windows recording: {str(e)}")
-                    continue
-
-        else:  # Mac OS
-            r = sr.Recognizer()
-            with sr.Microphone() as source:
-                logger.info("Microphone initialized")
-                r.adjust_for_ambient_noise(source, duration=1)
-                while not global_state.stop_flag.is_set() and not should_exit.is_set():
-                    try:
-                        audio = r.listen(source, timeout=2, phrase_time_limit=5)
-                        if audio.get_raw_data():
-                            global_state.audio_queue.put(audio)
-                            logger.debug("Audio captured and added to queue")
-                    except sr.WaitTimeoutError:
-                        continue
-                    
-    except Exception as e:
-        logger.error(f"Recording error: {e}")
-        st.error("マイク初期化エラー。ブラウザの設定でマイクの許可を確認してください。")
+   try:
+       st.info("マイクへのアクセスを許可してください")
+       
+       if "navigator.mediaDevices" not in st.session_state:
+           st.markdown("""
+               <script>
+               navigator.mediaDevices.getUserMedia({audio: true})
+                   .then(stream => {
+                       window.streamReference = stream;
+                       sessionStorage.setItem('micPermission', 'granted');
+                   })
+                   .catch(err => console.error(err));
+               </script>
+           """, unsafe_allow_html=True)
+           
+       import platform
+       system = platform.system()
+       logger.info(f"Detected OS: {system}")
+       
+       if system == "Windows":
+           import sounddevice as sd
+           import soundfile as sf
+           import numpy as np
+           
+           sample_rate = 44100
+           while not global_state.stop_flag.is_set() and not should_exit.is_set():
+               try:
+                   recording = sd.rec(int(5 * sample_rate), 
+                                    samplerate=sample_rate, 
+                                    channels=1, 
+                                    dtype='float32')
+                   sd.wait()
+                   sf.write('temp_audio.wav', recording, sample_rate)
+                   
+                   if global_state.can_add_transcription():
+                       with open('temp_audio.wav', 'rb') as audio_file:
+                           global_state.audio_queue.put(audio_file)
+                           logger.debug("Audio captured and added to queue")
+               except Exception as e:
+                   logger.error(f"Error in Windows recording: {str(e)}")
+                   continue
+       else:
+           r = sr.Recognizer()
+           with sr.Microphone() as source:
+               logger.info("Microphone initialized")
+               r.adjust_for_ambient_noise(source, duration=1)
+               while not global_state.stop_flag.is_set() and not should_exit.is_set():
+                   try:
+                       audio = r.listen(source, timeout=2, phrase_time_limit=5)
+                       if audio and audio.get_raw_data():
+                           global_state.audio_queue.put(audio)
+                           logger.debug("Audio captured and added to queue")
+                   except sr.WaitTimeoutError:
+                       continue
+                   except Exception as e:
+                       logger.error(f"Error in Mac recording: {str(e)}")
+                       continue
+                   
+   except Exception as e:
+       logger.error(f"Recording error: {e}", exc_info=True)
+       st.error("マイク初期化エラー。ブラウザの設定でマイクの許可を確認してください。")
 
 def process_audio():
     while not global_state.stop_flag.is_set() and not should_exit.is_set() or not global_state.audio_queue.empty():
