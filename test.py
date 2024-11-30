@@ -265,9 +265,10 @@ def save_transcription(transcription):
 
 def continuous_recording():
     try:
+        st.info("マイクへのアクセスを許可してください")
         import platform
         system = platform.system()
-        logger.info("Adjusting for ambient noise...")
+        logger.info(f"Detected OS: {system}")
 
         if system == "Windows":
             import sounddevice as sd
@@ -277,65 +278,55 @@ def continuous_recording():
             sample_rate = 44100
             while not global_state.stop_flag.is_set() and not should_exit.is_set():
                 try:
-                    recording = sd.rec(int(5 * sample_rate), samplerate=sample_rate, channels=1)
+                    recording = sd.rec(int(5 * sample_rate), 
+                                     samplerate=sample_rate, 
+                                     channels=1, 
+                                     dtype='float32')
                     sd.wait()
                     sf.write('temp_audio.wav', recording, sample_rate)
                     
                     if global_state.can_add_transcription():
                         with open('temp_audio.wav', 'rb') as audio_file:
-                            global_state.audio_queue.put(audio_file.read())
+                            global_state.audio_queue.put(audio_file)
                             logger.debug("Audio captured and added to queue")
                 except Exception as e:
                     logger.error(f"Error in Windows recording: {str(e)}")
                     continue
 
         else:  # Mac OS
-            import pyaudio
-            import wave
-            
-            CHUNK = 1024
-            FORMAT = pyaudio.paFloat32
-            CHANNELS = 1
-            RATE = 44100
-            
-            p = pyaudio.PyAudio()
-            stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, 
-                          input=True, frames_per_buffer=CHUNK)
-                       
-            while not global_state.stop_flag.is_set() and not should_exit.is_set():
-                try:
-                    frames = []
-                    for i in range(0, int(RATE / CHUNK * 5)):
-                        data = stream.read(CHUNK)
-                        frames.append(data)
-                    
-                    if global_state.can_add_transcription():
-                        with wave.open('temp_audio.wav', 'wb') as wf:
-                            wf.setnchannels(CHANNELS)
-                            wf.setsampwidth(p.get_sample_size(FORMAT))
-                            wf.setframerate(RATE)
-                            wf.writeframes(b''.join(frames))
-                        
-                        with open('temp_audio.wav', 'rb') as audio_file:
-                            global_state.audio_queue.put(audio_file.read())
+            r = sr.Recognizer()
+            with sr.Microphone() as source:
+                logger.info("Microphone initialized")
+                r.adjust_for_ambient_noise(source, duration=1)
+                while not global_state.stop_flag.is_set() and not should_exit.is_set():
+                    try:
+                        audio = r.listen(source, timeout=2, phrase_time_limit=5)
+                        if audio.get_raw_data():
+                            global_state.audio_queue.put(audio)
                             logger.debug("Audio captured and added to queue")
-                except Exception as e:
-                    logger.error(f"Error in MacOS recording: {str(e)}")
-                    continue
+                    except sr.WaitTimeoutError:
+                        continue
                     
     except Exception as e:
         logger.error(f"Recording error: {e}")
-        st.error("マイクが検出できません。デバイスを確認してください。")
-        st.stop()
+        st.error("マイク初期化エラー。ブラウザの設定でマイクの許可を確認してください。")
 
 def process_audio():
     while not global_state.stop_flag.is_set() and not should_exit.is_set() or not global_state.audio_queue.empty():
         try:
             audio = global_state.audio_queue.get(timeout=1)
-            audio_data = audio.get_wav_data()
+            logger.debug("Retrieved audio from queue")
+            
+            if isinstance(audio, sr.AudioData):
+                audio_data = audio.get_wav_data()
+            else:
+                audio_data = audio.read()
+                
+            logger.debug("Processing audio data")
             transcription = transcribe_audio(audio_data)
             
             if transcription:
+                logger.info(f"Transcription successful: {transcription}")
                 save_transcription(transcription)
                 global_state.transcription_queue.put(transcription)
                 global_state.add_transcription(transcription)
@@ -344,7 +335,8 @@ def process_audio():
             continue
         except Exception as e:
             logger.error(f"Error in audio processing: {str(e)}")
-    logger.info("Audio processing stopped in process_audio function")
+            logger.exception("Full traceback:")
+    logger.info("Audio processing stopped")
 
 def start_background_recording():
     global_state.stop_flag.clear()
